@@ -1,6 +1,6 @@
 # Background report exports
 
-Large exports used to run inside the web request: the user clicked "Export," the page hung, and the server held a thread (and sometimes a database connection) until the file was built or the request timed out. This project moves that work to a background queue. The request returns in milliseconds, a worker builds the file, and the page shows live progress until the download is ready.
+When a large export runs inside the web request, the user clicks "Export" and the page hangs, while the server holds a thread (and often a database connection) until the file is built or the request times out. This project moves that work to a background queue. The request returns in milliseconds, a worker builds the file, and the page shows live progress until the download is ready.
 
 It's a from-scratch rebuild of background download processing I built at work, which took blocking file operations out of the request pipeline. None of that code is reused here.
 
