@@ -1,0 +1,32 @@
+﻿@inherits LayoutComponentBase
+@inject NavigationManager Nav
+
+<header class="topbar">
+    <a class="brand" href="">Report Exports</a>
+    <AuthorizeView>
+        <label class="user">
+            Signed in as
+            <select value="@context.User.Identity?.Name" @onchange="SwitchUser">
+                @foreach (var u in DemoUsers.All)
+                {
+                    <option value="@u">@u</option>
+                }
+            </select>
+        </label>
+    </AuthorizeView>
+</header>
+
+<main class="page">
+    @Body
+</main>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    // Signing in sets a cookie, which needs a real HTTP request rather than the Blazor circuit.
+    private void SwitchUser(ChangeEventArgs e) => Nav.NavigateTo($"demo-login?user={e.Value}", forceLoad: true);
+}

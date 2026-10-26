@@ -1,0 +1,140 @@
+﻿@page "/"
+@implements IDisposable
+@inject ExportQueue Queue
+@inject JobNotifier Notifier
+
+<PageTitle>Report Exports</PageTitle>
+
+<h1>Exports</h1>
+<p class="muted">Large exports run in the background. You can leave this page; your files will be here when they're ready.</p>
+
+@if (_message is not null)
+{
+    <div class="alert @(_messageIsError ? "error" : "ok")" role="status">@_message</div>
+}
+
+<section class="card">
+    <h2>Request an export</h2>
+    <div class="form-row">
+        <label>
+            Report
+            <select @bind="_type">
+                @foreach (var t in Queue.ExportTypes)
+                {
+                    <option value="@t">@t</option>
+                }
+            </select>
+        </label>
+        <label>
+            Rows
+            <select @bind="_rows">
+                <option value="20000">20,000</option>
+                <option value="100000">100,000</option>
+                <option value="300000">300,000</option>
+            </select>
+        </label>
+        <button class="primary" @onclick="RequestAsync">Request export</button>
+    </div>
+    <p class="hint">“Flaky source” times out partway through its first attempt so you can watch the retry.</p>
+</section>
+
+<h2>Your exports</h2>
+@if (_jobs.Count == 0)
+{
+    <p class="muted">Nothing yet.</p>
+}
+else
+{
+    <table class="grid">
+        <thead><tr><th>Requested</th><th>Report</th><th class="num">Rows</th><th>Status</th><th style="width:28%">Progress</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var j in _jobs)
+            {
+                <tr>
+                    <td>@j.CreatedAt.ToLocalTime().ToString("h:mm:ss tt")</td>
+                    <td>@j.ExportType</td>
+                    <td class="num">@j.RowCount.ToString("N0")</td>
+                    <td>
+                        <span class="status @j.Status.ToString().ToLowerInvariant()">@j.Status</span>
+                        @if (j.Attempts > 1) { <span class="muted small"> attempt @j.Attempts</span> }
+                        @if (j.Error is not null) { <div class="small @(j.Status == JobStatus.Failed ? "error-text" : "muted")">@j.Error</div> }
+                    </td>
+                    <td>
+                        <div class="bar"><div class="fill @j.Status.ToString().ToLowerInvariant()" style="width:@(j.Progress)%"></div></div>
+                        <span class="small muted">@j.Progress%</span>
+                    </td>
+                    <td class="num">
+                        @if (j.Status == JobStatus.Succeeded)
+                        {
+                            <a class="button" href="exports/@j.Id/download" target="_blank">Download @Size(j.SizeBytes)</a>
+                        }
+                        else if (j.IsActive)
+                        {
+                            <button @onclick="() => CancelAsync(j.Id)">Cancel</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState> Auth { get; set; } = default!;
+
+    private string _user = "";
+    private List<ExportJob> _jobs = [];
+    private string _type = "";
+    private int _rows = 100_000;
+    private string? _message;
+    private bool _messageIsError;
+    private int _refreshQueued;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _user = (await Auth).User.Identity!.Name!;
+        _type = Queue.ExportTypes[0];
+        _jobs = await Queue.ListAsync(_user);
+        Notifier.JobChanged += OnJobChanged;
+    }
+
+    /// <summary>
+    /// Progress events arrive from worker threads, many per second across all users.
+    /// Coalesce them into at most one refresh every 250 ms for this page.
+    /// </summary>
+    private void OnJobChanged(Guid jobId)
+    {
+        if (Interlocked.Exchange(ref _refreshQueued, 1) == 1) return;
+        _ = InvokeAsync(async () =>
+        {
+            await Task.Delay(250);
+            Interlocked.Exchange(ref _refreshQueued, 0);
+            _jobs = await Queue.ListAsync(_user);
+            StateHasChanged();
+        });
+    }
+
+    private async Task RequestAsync()
+    {
+        try
+        {
+            await Queue.EnqueueAsync(_user, _type, _rows);
+            (_message, _messageIsError) = ("Export queued. It will appear below as it runs.", false);
+        }
+        catch (ExportRequestException ex)
+        {
+            (_message, _messageIsError) = (ex.Message, true);
+        }
+        _jobs = await Queue.ListAsync(_user);
+    }
+
+    private async Task CancelAsync(Guid id)
+    {
+        await Queue.CancelAsync(id, _user);
+        _jobs = await Queue.ListAsync(_user);
+    }
+
+    private static string Size(long? bytes) => bytes is null ? "" : $"({bytes / 1024.0 / 1024.0:F1} MB)";
+
+    public void Dispose() => Notifier.JobChanged -= OnJobChanged;
+}
